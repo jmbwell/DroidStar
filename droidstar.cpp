@@ -1089,9 +1089,10 @@ void DroidStar::process_iax_hosts()
     m_customhosts = m_localhosts.split('\n');
     for (const auto& i : std::as_const(m_customhosts)){
         QStringList line = i.simplified().split(' ');
-        if(line.at(0) == "IAX"){
+        if((line.at(0) == "IAX") && (line.size() >= 3) ){
             if(line.at(2).simplified() == "wt"){
-                m_hostmap[line.at(1).simplified()] = line.at(1).simplified() + ".nodes.allstarlink.org,4569,allstar-public,allstar";// + line.at(3).simplified() + "," + line.at(4).simplified() + "," + line.at(5).simplified();
+                QString port = (line.size() == 3) ? "4569" : line.at(3).simplified();
+                m_hostmap[line.at(1).simplified()] = line.at(1).simplified() + ".nodes.allstarlink.org," + port + ",allstar-public,allstar";// + line.at(3).simplified() + "," + line.at(4).simplified() + "," + line.at(5).simplified();
             }
             else{
                 m_hostmap[line.at(1).simplified()] = line.at(2).simplified() + "," + line.at(3).simplified() + "," + line.at(4).simplified() + "," + line.at(5).simplified();

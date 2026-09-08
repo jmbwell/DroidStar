@@ -48,6 +48,9 @@ IAX 12345 wt
 When 'wt' is used after the node number, then wt will be replaced by XXXXX.nodes.allstarlink.org:4569, where XXXXX is the specified none number.  Then you must add you ASL web portal password to ASL password under settings.  This is *NOT* the password for your node, this is the password you made to login to the ASL website.
 
 # General building instructions
+For Apple platforms, see [Building DroidStar for macOS and iOS](docs/building-apple.md)
+for prerequisites and the current build verification status.
+
 This software is written primarily in C++ on Linux and requires Qt6 >= Qt6.5, and naturally the devel packages to build.  Java, QML (Javascript based), and C# code is also used where necessary.  The preferred way to obtain Qt is to use the Qt open source online installer from the Qt website.  Run this installer as a user (not root) to keep the Qt installation separate from your system libs.  Select the option as shown in this pic https://imgur.com/i0WuFCY which will install everything under ~/Qt.
 
 In an effort to encourage others to build from source on multiple platforms, there are no longer any external build dependencies.
@@ -95,5 +98,4 @@ There are static builds for all platforms out there on a few 3rd party sites suc
 http://pizzanbeer.net/
 
 The ipa file is the iOS package.
-
 

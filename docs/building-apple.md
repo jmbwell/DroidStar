@@ -1,6 +1,6 @@
 # Building DroidStar for macOS and iOS
 
-Status: initial setup notes
+Status: macOS configure and compile verified; runtime testing and iOS build pending.
 
 ## Prerequisites
 
@@ -8,15 +8,63 @@ Status: initial setup notes
 - Qt 6.5 or newer
   - Use official installer: [Qt Online
   Installer](https://download.qt.io/official_releases/online_installers/)
-  - Include macOS, iOS, Qt Multimedia, and Qt Serial Bus modules
+  - Include macOS, iOS, Qt Multimedia, Qt Serial Bus, and Qt Serial Port modules
 - CMake (`brew install cmake` or use what comes with Qt)
 
 
 ## macOS
 
-The CMake project declares an Apple application bundle and links AVFoundation.
-The next milestone is a local `.app` that launches and supports microphone
-input, playback, and a network connection.
+### Configure
+
+Run from the repository root. These commands were verified on Apple Silicon
+with Qt 6.11.2, Xcode 26.6, and Homebrew CMake 4.4.3 on September 8, 2026.
+Adjust the Qt installation path if using a different version or location.
+
+```sh
+"$HOME/Qt/6.11.2/macos/bin/qt-cmake" \
+  -S . -B /tmp/droidstar-macos-build \
+  -DUSE_MD380_VOCODER=AUTO \
+  -DCMAKE_BUILD_TYPE=Debug
+```
+
+Use a fresh build directory for the first configuration. The `qt-cmake` wrapper
+supplies Qt's toolchain and search paths; on the tested system it invoked
+Homebrew CMake through `PATH`. Running plain `cmake` without a Qt search path
+did not find the installation.
+
+The tested configuration reported:
+
+```text
+-- Vocoder: bundled (MD380 header or library not found)
+-- Configuring done
+-- Generating done
+```
+
+If configuration reports missing Multimedia or SerialPort, add those components
+for the macOS kit using Qt Maintenance Tool. A missing TaskTree dependency from
+a QML plugin produced a warning in this installation but did not prevent
+configuration or compilation.
+
+### Build
+
+```sh
+cmake --build /tmp/droidstar-macos-build --parallel 6
+```
+
+The successful build ends with `Built target DroidStar` and produces:
+
+```text
+/tmp/droidstar-macos-build/DroidStar.app
+```
+
+This is an ARM64 debug development build that uses the installed Qt libraries.
+It has not yet been packaged as a standalone application for distribution.
+The build directory is temporary; for a persistent build, replace
+`/tmp/droidstar-macos-build` with `build/macos` in both commands. Repeat the build
+command after source changes.
+
+Compilation is verified. Launch, microphone access, audio playback and capture,
+and network operation remain to be tested.
 
 ## iOS
 
@@ -50,7 +98,8 @@ behavior and audio quality still require testing on the target device.
 
 ## Known gaps in this checkout
 
-- The bundled codec paths need build and audio validation on Apple platforms.
+- The bundled codec paths compile on macOS but still need audio validation;
+  iOS build and audio validation remain pending.
 - `Info.plist` contains a placeholder bundle identifier and microphone usage
   description, and refers to a launch screen that is absent from the checkout.
   Need to set a proper bundle identifier, add a launch screen, and verify the

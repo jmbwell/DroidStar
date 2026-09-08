@@ -31,6 +31,8 @@
 #endif
 #include <QAudioOutput>
 #include <QQueue>
+#include <QElapsedTimer>
+#include "audiocaptureconverter.h"
 
 #define AUDIO_OUT 1
 #define AUDIO_IN  0
@@ -50,7 +52,7 @@ public:
 	void stop_playback();
 	void write(int16_t *, size_t);
 	void set_output_buffer_size(uint32_t b) { m_out->setBufferSize(b); }
-	void set_input_buffer_size(uint32_t b) { if(m_in != nullptr) m_in->setBufferSize(b); }
+	void set_input_buffer_size(uint32_t b);
 	void set_output_volume(qreal v){ m_out->setVolume(v); }
 	void set_input_volume(qreal v){ if(m_in != nullptr) m_in->setVolume(v); }
 	void set_agc(bool agc) { m_agc = agc; }
@@ -59,7 +61,7 @@ public:
 	uint16_t read(int16_t *);
 	uint16_t level() { return m_maxlevel; }
 signals:
-
+    void diagnostic(QString message);
 private:
 	QString m_outputdevice;
 	QString m_inputdevice;
@@ -70,12 +72,19 @@ private:
 	QAudioSink *m_out;
 	QAudioSource *m_in;
 #endif
-	QIODevice *m_outdev;
-	QIODevice *m_indev;
+	QIODevice *m_outdev = nullptr;
+	QIODevice *m_indev = nullptr;
 	QQueue<int16_t> m_audioinq;
 	uint16_t m_maxlevel;
 	bool m_agc;
-	float m_srm; // sample rate multiplier for macOS HACK
+	AudioCaptureConverter m_captureConverter;
+    QElapsedTimer m_captureElapsed;
+    QElapsedTimer m_playbackElapsed;
+    quint64 m_capturedSamples = 0;
+    quint64 m_consumedSamples = 0;
+    quint64 m_playbackBytes = 0;
+    quint64 m_acceptedBytes = 0;
+    quint64 m_shortWrites = 0;
 
 	float m_audio_out_temp_buf[320];   //!< output of decoder
 	float *m_audio_out_temp_buf_p;

@@ -333,6 +333,7 @@ void DMR::setup_connection()
 	m_ping_timer->start(5000);
 	if (m_modeinfo.sw_vocoder_loaded) {
 		m_audio = new AudioEngine(m_audioin, m_audioout);
+        connect(m_audio, &AudioEngine::diagnostic, this, &Mode::update_log);
 		m_audio->init();
 	}
 }

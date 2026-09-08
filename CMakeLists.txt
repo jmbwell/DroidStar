@@ -28,7 +28,7 @@ qt_add_executable(DroidStar WIN32 MACOSX_BUNDLE
     SHA256.cpp SHA256.h
     YSFConvolution.cpp YSFConvolution.h
     YSFFICH.cpp YSFFICH.h
-    audioengine.cpp audioengine.h
+    audioengine.cpp audioengine.h audiocaptureconverter.h
     cbptc19696.cpp cbptc19696.h
     cgolay2087.cpp cgolay2087.h
     chamming.cpp chamming.h

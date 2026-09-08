@@ -19,18 +19,11 @@
 #include <QDebug>
 #include <cmath>
 
-#if defined (Q_OS_MACOS) || defined(Q_OS_IOS)
-#define MACHAK 1
-#else
-#define MACHAK 0
-#endif
-
 AudioEngine::AudioEngine(QString in, QString out) :
 	m_outputdevice(out),
 	m_inputdevice(in),
 	m_out(nullptr),
-	m_in(nullptr),
-	m_srm(1)
+	m_in(nullptr)
 {
 	m_audio_out_temp_buf_p = m_audio_out_temp_buf;
 	memset(m_aout_max_buf, 0, sizeof(float) * 200);
@@ -127,36 +120,56 @@ void AudioEngine::init()
 				device = *it;
 			}
 		}
-		if (!device.isFormatSupported(format)) {
-            qWarning() << "Current audio format not supported by capture device";
-        }
-
-		int sr = 8000;
-		if(MACHAK){
-			sr = device.preferredFormat().sampleRate();
-			m_srm = (float)sr / 8000.0;
-		}
-		format.setSampleRate(sr);
+        // Avoid backend rate conversion: request the hardware's native PCM format.
+        format = device.preferredFormat();
         m_in = new QAudioSource(device, format, this);
-        qDebug() << "Capture device: " <<  device.description() << " SR: " << sr << " resample factor: " << m_srm;
+        qDebug() << "Capture device:" << device.description() << "native format:" << format;
 	}
+}
+
+void AudioEngine::set_input_buffer_size(uint32_t bytes)
+{
+    if(!m_in) return;
+    // Callers specify bytes of 8 kHz mono Int16; preserve that duration natively.
+    const qint64 frames = (qint64(bytes) * m_in->format().sampleRate() + 15999) / 16000;
+    m_in->setBufferSize(frames * m_in->format().bytesPerFrame());
 }
 
 void AudioEngine::start_capture()
 {
 	m_audioinq.clear();
+
+    m_capturedSamples = 0;
+    m_consumedSamples = 0;
 	if(m_in != nullptr){
+        m_captureConverter.reset(m_in->format());
 		m_indev = m_in->start();
-		if(MACHAK) m_srm = (float)(m_in->format().sampleRate()) / 8000.0;
-		connect(m_indev, SIGNAL(readyRead()), SLOT(input_data_received()));
+        if(m_indev){
+            m_captureElapsed.start();
+            emit diagnostic(QString("Audio capture: %1 Hz, %2 channel(s), format %3, buffer %4 bytes")
+                .arg(m_in->format().sampleRate()).arg(m_in->format().channelCount())
+                .arg(int(m_in->format().sampleFormat())).arg(m_in->bufferSize()));
+            connect(m_indev, SIGNAL(readyRead()), SLOT(input_data_received()));
+        }
+        else{
+            qWarning() << "Could not start audio capture:" << m_in->error();
+        }
 	}
 }
 
 void AudioEngine::stop_capture()
 {
 	if(m_in != nullptr){
-		m_indev->disconnect();
+        if(m_captureElapsed.isValid()){
+            emit diagnostic(QString("Audio capture stopped: %1 ms, %2 samples received (%3 ms at 8 kHz), %4 consumed, %5 queued; device processed %6 ms, %7 native frames")
+                .arg(m_captureElapsed.elapsed()).arg(m_capturedSamples).arg(m_capturedSamples / 8)
+                .arg(m_consumedSamples).arg(m_audioinq.size()).arg(m_in->processedUSecs() / 1000)
+                .arg(m_captureConverter.inputFrames()));
+            m_captureElapsed.invalidate();
+        }
+		if(m_indev) m_indev->disconnect(this);
 		m_in->stop();
+        m_indev = nullptr;
 	}
 }
 
@@ -166,6 +179,11 @@ void AudioEngine::start_playback()
 		// Only start if stopped or suspended - IdleState and ActiveState mean already started
 		if (m_out->state() == QAudio::StoppedState || m_out->state() == QAudio::SuspendedState) {
 			m_outdev = m_out->start();
+            m_playbackElapsed.start();
+            m_playbackBytes = m_acceptedBytes = m_shortWrites = 0;
+            emit diagnostic(QString("Audio playback: %1 Hz, %2 channel(s), format %3, buffer %4 bytes")
+                .arg(m_out->format().sampleRate()).arg(m_out->format().channelCount())
+                .arg(int(m_out->format().sampleFormat())).arg(m_out->bufferSize()));
 		}
 	}
 }
@@ -173,6 +191,13 @@ void AudioEngine::start_playback()
 void AudioEngine::stop_playback()
 {
 	if (m_out) {
+        if(m_playbackElapsed.isValid()){
+            emit diagnostic(QString("Audio playback stopped: %1 ms, %2 ms supplied, %3 ms accepted, %4 short writes; device processed %5 ms, %6 bytes still buffered")
+                .arg(m_playbackElapsed.elapsed()).arg(m_playbackBytes / 16).arg(m_acceptedBytes / 16)
+                .arg(m_shortWrites).arg(m_out->processedUSecs() / 1000)
+                .arg(m_out->bufferSize() - m_out->bytesFree()));
+            m_playbackElapsed.invalidate();
+        }
 		//m_outdev->reset();
 		m_out->reset();
 		m_out->stop();
@@ -181,32 +206,10 @@ void AudioEngine::stop_playback()
 
 void AudioEngine::input_data_received()
 {
-	QByteArray data = m_indev->readAll();
-
-	if (data.size() > 0){
-/*
-		fprintf(stderr, "AUDIOIN: ");
-		for(int i = 0; i < len; ++i){
-			fprintf(stderr, "%02x ", (uint8_t)data.data()[i]);
-		}
-		fprintf(stderr, "\n");
-		fflush(stderr);
-*/
-		if(MACHAK){
-			std::vector<int16_t> samples;
-			for(int i = 0; i < data.size(); i += 2){
-				samples.push_back(((data.data()[i+1] << 8) & 0xff00) | (data.data()[i] & 0xff));
-			}
-			for(float i = 0; i < (float)data.size()/2; i += m_srm){
-				m_audioinq.enqueue(samples[i]);
-			}
-		}
-		else{
-			for(int i = 0; i < data.size(); i += (2 * m_srm)){
-				m_audioinq.enqueue(((data.data()[i+1] << 8) & 0xff00) | (data.data()[i] & 0xff));
-			}
-		}
-	}
+    if(!m_indev) return;
+    const auto samples = m_captureConverter.append(m_indev->readAll());
+    m_capturedSamples += samples.size();
+    for(int16_t sample : samples) m_audioinq.enqueue(sample);
 }
 
 void AudioEngine::write(int16_t *pcm, size_t s)
@@ -224,9 +227,13 @@ void AudioEngine::write(int16_t *pcm, size_t s)
 		process_audio(pcm, s);
 	}
 
-	size_t l = m_outdev->write((const char *) pcm, sizeof(int16_t) * s);
-
-	if (l*2 < s){
+    if(!m_outdev) return;
+    const qint64 requested = sizeof(int16_t) * s;
+	const qint64 l = m_outdev->write((const char *) pcm, requested);
+    m_playbackBytes += requested;
+    if(l > 0) m_acceptedBytes += l;
+	if (l != requested){
+        ++m_shortWrites;
 		qDebug() << "AudioEngine::write() " << s << ":" << l << ":" << (int)m_out->bytesFree() << ":" << m_out->bufferSize() << ":" << m_out->error();
 	}
 
@@ -242,6 +249,7 @@ uint16_t AudioEngine::read(int16_t *pcm, int s)
 	m_maxlevel = 0;
 
 	if(m_audioinq.size() >= s){
+        m_consumedSamples += s;
 		for(int i = 0; i < s; ++i){
 			pcm[i] = m_audioinq.dequeue();
 			if(pcm[i] > m_maxlevel){
@@ -271,6 +279,7 @@ uint16_t AudioEngine::read(int16_t *pcm)
 		s = m_audioinq.size();
 	}
 
+    m_consumedSamples += s;
 	for(int i = 0; i < s; ++i){
 		pcm[i] = m_audioinq.dequeue();
 		if(pcm[i] > m_maxlevel){

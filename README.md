@@ -72,11 +72,12 @@ cd build
 cmake ..
 make
 ```
-If building an an arm based platform like rpi or using dynarmic on x64/arm64, the md380 vocoder can be used.  In order to build with this, uncomment the following line in DroidStar.pro:
+Vocoder selection defaults to `AUTO`: CMake uses the external md380 vocoder when its header and library pass a compile and link check for the build target, otherwise it uses the bundled codecs. To require the external vocoder, configure CMake with:
 ```
-#DEFINES += USE_MD380_VOCODER
+cmake -S . -B build -DUSE_MD380_VOCODER=ON
 ```
-This requires the md380_vocoder library to be installed: https://github.com/nostar/md380_vocoder
+This requires a target-compatible build of the md380_vocoder library and its header to be installed: https://github.com/nostar/md380_vocoder
+For a nonstandard installation, set `CMAKE_PREFIX_PATH` to its installation prefix, or set `MD380_VOCODER_INCLUDE_DIR` and `MD380_VOCODER_LIBRARY` explicitly. With `ON`, CMake reports an error if the dependencies are missing or fail the target compile and link check. Use `-DUSE_MD380_VOCODER=OFF` to force the bundled codecs, or `-DUSE_MD380_VOCODER=AUTO` to restore automatic selection in an existing build directory. The check does not run the vocoder or verify audio quality.
 You must make sure that you are not in violation of any patent laws in your area if you decide to use this.
 
 My primary development platform is Fedora Linux.  With a proper build environment, the build instructions apply to all other platforms/distributions, including Windows and macOS.
@@ -98,4 +99,3 @@ There are static builds for all platforms out there on a few 3rd party sites suc
 http://pizzanbeer.net/
 
 The ipa file is the iOS package.
-

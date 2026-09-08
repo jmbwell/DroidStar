@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(DroidStar VERSION 1.0 LANGUAGES C CXX)
 
+include(cmake/MD380Vocoder.cmake)
+
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 if(IOS)
@@ -211,14 +213,15 @@ if(FALSE) # set TRUE for flite
     )
 endif()
 
-if(TRUE) # set TRUE for md380_vocoder
+if(MD380_VOCODER_AVAILABLE)
+    target_include_directories(DroidStar PRIVATE
+        "${MD380_VOCODER_INCLUDE_DIR}"
+    )
     target_compile_definitions(DroidStar PRIVATE
         USE_MD380_VOCODER
     )
     target_link_libraries(DroidStar PRIVATE
-        md380_vocoder
-        #/home/nostar/Android/Sdk/local/libmd380_vocoder.a
-        # -Xlinker --section-start=.firmware=0x0800C000 -Xlinker --section-start=.sram=0x20000000
+        "${MD380_VOCODER_LIBRARY}"
     )
 endif()
 

@@ -79,6 +79,7 @@ void DMR::set_dmr_params(uint8_t essid, QString password, QString lat, QString l
 
 void DMR::process_udp()
 {
+    if(!m_udp) return;
 	QByteArray buf;
 	QByteArray in;
 	QByteArray out;
@@ -100,46 +101,22 @@ void DMR::process_udp()
         debug << s;
     }
 
-	// Handle MSTNAK - Master NAK (peer not recognized/rejected)
-	if((::memcmp(buf.data(), "MSTNAK", 6U) == 0)){
-		qDebug() << "Received MSTNAK from master - reconnecting...";
-		// Mark disconnected, stop timers and clean up socket
-		m_modeinfo.status = DISCONNECTED;
-		if(m_ping_timer && m_ping_timer->isActive()){
-			m_ping_timer->stop();
-		}
-		if(m_udp){
-			m_udp->deleteLater();
-			m_udp = nullptr;
-		}
-		emit update(m_modeinfo);
-	// Simulate pressing the main connect button so the UI shows disconnected,
-	// then request a reconnect after a 10s timeout using the same hook.
-	// Reconnect must be queued before disconnect destroys this object
-	emit request_reconnect(10000);
-	emit request_connect_toggle();
-		return;
-	}
-	// Handle MSTCL - Master close (server shutting down)
-	if((::memcmp(buf.data(), "MSTCL", 5U) == 0)){
-		qDebug() << "Received MSTCL from master - reconnecting...";
-		// Treat master close as a disconnect and attempt reconnect
-		m_modeinfo.status = DISCONNECTED;
-		if(m_ping_timer && m_ping_timer->isActive()){
-			m_ping_timer->stop();
-		}
-		if(m_udp){
-			m_udp->deleteLater();
-			m_udp = nullptr;
-		}
-		emit update(m_modeinfo);
-	// Simulate pressing the main connect button to show disconnected state,
-	// then request a reconnect after 10 seconds via the main app hook.
-	// Reconnect must be queued before disconnect destroys this object
-	emit request_reconnect(10000);
-	emit request_connect_toggle();
-		return;
-	}
+    // A rejection or server close ends this session; retry requires user action.
+    if(buf.startsWith("MSTNAK") || buf.startsWith("MSTCL")){
+        const QString error = buf.startsWith("MSTNAK")
+            ? QStringLiteral("The DMR server rejected the connection (MSTNAK). Check your DMR ID and server password before trying again.")
+            : QStringLiteral("The DMR server closed the connection (MSTCL). Try connecting again later.");
+        m_modeinfo.status = DISCONNECTED;
+        for(QTimer *timer : {m_ping_timer, m_txtimer, m_rxtimer}){
+            if(timer) timer->stop();
+        }
+        delete m_audio;
+        m_audio = nullptr;
+        m_udp->deleteLater();
+        m_udp = nullptr;
+        emit connection_error(error);
+        return;
+    }
 	if((m_modeinfo.status != CONNECTED_RW) && (::memcmp(buf.data(), "RPTACK", 6U) == 0)){
 		switch(m_modeinfo.status){
 		case CONNECTING:

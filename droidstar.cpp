@@ -444,9 +444,7 @@ void DroidStar::process_connect()
 		connect(this, SIGNAL(rptr2_changed(QString)), m_mode, SLOT(rptr2_changed(QString)));
 		connect(this, SIGNAL(usrtxt_changed(QString)), m_mode, SLOT(usrtxt_changed(QString)));
         connect(this, SIGNAL(debug_changed(bool)), m_mode, SLOT(debug_changed(bool)));
-		// Allow modes to request the main app to toggle the connect button (simulate user)
-		connect(m_mode, SIGNAL(request_connect_toggle()), this, SLOT(process_connect()));
-		connect(m_mode, SIGNAL(request_reconnect(int)), this, SLOT(schedule_reconnect(int)));
+        connect(m_mode, &Mode::connection_error, this, &DroidStar::handle_connection_error);
         emit connect_status_changed(1);
 		emit module_changed(m_module);
 		emit mycall_changed(m_mycall);
@@ -505,10 +503,14 @@ void DroidStar::process_connect()
 */
 }
 
-void DroidStar::schedule_reconnect(int ms)
+void DroidStar::handle_connection_error(QString message)
 {
-	qDebug() << "schedule_reconnect called, reconnecting in" << ms << "ms";
-	QTimer::singleShot(ms, this, SLOT(process_connect()));
+    // Ignore an error queued by a session the user has already closed or replaced.
+    if(sender() != m_mode || connect_status == Mode::DISCONNECTED) return;
+    process_connect();
+    m_errortxt = message;
+    emit update_log(message);
+    emit connect_status_changed(5);
 }
 
 void DroidStar::process_host_change(const QString &h)

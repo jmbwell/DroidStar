@@ -32,6 +32,7 @@
 #include <QAudioOutput>
 #include <QQueue>
 #include <QElapsedTimer>
+#include <QTimer>
 #include "audiocaptureconverter.h"
 
 #define AUDIO_OUT 1
@@ -85,6 +86,12 @@ private:
     quint64 m_playbackBytes = 0;
     quint64 m_acceptedBytes = 0;
     quint64 m_shortWrites = 0;
+    QByteArray m_pendingPlayback;
+    QTimer m_playbackPump;
+    QElapsedTimer m_playbackDrain;
+    bool m_drainingPlayback = false;
+    void flush_playback();
+    void finish_playback();
 
 	float m_audio_out_temp_buf[320];   //!< output of decoder
 	float *m_audio_out_temp_buf_p;

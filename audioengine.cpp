@@ -16,8 +16,12 @@
 */
 
 #include "audioengine.h"
+#include "audioplaybackqueue.h"
 #include <QDebug>
 #include <cmath>
+#ifdef Q_OS_IOS
+#include "iosaudiosession.h"
+#endif
 
 AudioEngine::AudioEngine(QString in, QString out) :
 	m_outputdevice(out),
@@ -31,6 +35,8 @@ AudioEngine::AudioEngine(QString in, QString out) :
 	m_aout_max_buf_idx = 0;
 	m_aout_gain = 100;
 	m_volume = 1.0f;
+    m_playbackPump.setInterval(10);
+    connect(&m_playbackPump, &QTimer::timeout, this, &AudioEngine::flush_playback);
 }
 
 AudioEngine::~AudioEngine()
@@ -120,8 +126,14 @@ void AudioEngine::init()
 				device = *it;
 			}
 		}
-        // Avoid backend rate conversion: request the hardware's native PCM format.
+		// Avoid backend rate conversion: request the hardware's native PCM format.
         format = device.preferredFormat();
+#ifdef Q_OS_IOS
+        QString sessionDiagnostic;
+        const int sessionRate = prepareIosAudioSession(sessionDiagnostic);
+        emit diagnostic(sessionDiagnostic);
+        if(sessionRate > 0) format.setSampleRate(sessionRate);
+#endif
         m_in = new QAudioSource(device, format, this);
         qDebug() << "Capture device:" << device.description() << "native format:" << format;
 	}
@@ -132,7 +144,10 @@ void AudioEngine::set_input_buffer_size(uint32_t bytes)
     if(!m_in) return;
     // Callers specify bytes of 8 kHz mono Int16; preserve that duration natively.
     const qint64 frames = (qint64(bytes) * m_in->format().sampleRate() + 15999) / 16000;
-    m_in->setBufferSize(frames * m_in->format().bytesPerFrame());
+    // Allow scheduling delays without discarding microphone frames. Capacity
+    // does not delay delivery: readyRead is handled as soon as data arrives.
+    const qint64 capacityFrames = std::max(frames, qint64(m_in->format().sampleRate() / 4));
+    m_in->setBufferSize(capacityFrames * m_in->format().bytesPerFrame());
 }
 
 void AudioEngine::start_capture()
@@ -175,32 +190,63 @@ void AudioEngine::stop_capture()
 
 void AudioEngine::start_playback()
 {
+    m_drainingPlayback = false;
 	if (m_out) {
 		// Only start if stopped or suspended - IdleState and ActiveState mean already started
 		if (m_out->state() == QAudio::StoppedState || m_out->state() == QAudio::SuspendedState) {
 			m_outdev = m_out->start();
             m_playbackElapsed.start();
             m_playbackBytes = m_acceptedBytes = m_shortWrites = 0;
+            m_pendingPlayback.clear();
             emit diagnostic(QString("Audio playback: %1 Hz, %2 channel(s), format %3, buffer %4 bytes")
                 .arg(m_out->format().sampleRate()).arg(m_out->format().channelCount())
                 .arg(int(m_out->format().sampleFormat())).arg(m_out->bufferSize()));
 		}
+        if(m_outdev) m_playbackPump.start();
 	}
 }
 
 void AudioEngine::stop_playback()
 {
+    if(!m_out || !m_playbackElapsed.isValid() || m_drainingPlayback) return;
+    m_drainingPlayback = true;
+    m_playbackDrain.start();
+    flush_playback();
+}
+
+void AudioEngine::flush_playback()
+{
+    if(!m_outdev || !m_out) return;
+    if(!m_pendingPlayback.isEmpty()) {
+        const qint64 requested = m_pendingPlayback.size();
+        const qint64 accepted = flushAudioPlayback(m_pendingPlayback, *m_outdev);
+        if(accepted > 0) {
+            m_acceptedBytes += accepted;
+        }
+        if(accepted < requested) ++m_shortWrites;
+    }
+    if(m_drainingPlayback &&
+       ((m_pendingPlayback.isEmpty() && m_out->bytesFree() >= m_out->bufferSize()) ||
+        m_playbackDrain.elapsed() >= 1000)) finish_playback();
+}
+
+void AudioEngine::finish_playback()
+{
+    m_playbackPump.stop();
+    m_drainingPlayback = false;
 	if (m_out) {
         if(m_playbackElapsed.isValid()){
-            emit diagnostic(QString("Audio playback stopped: %1 ms, %2 ms supplied, %3 ms accepted, %4 short writes; device processed %5 ms, %6 bytes still buffered")
+            emit diagnostic(QString("Audio playback stopped: %1 ms, %2 ms supplied, %3 ms accepted, %4 short writes retried; device processed %5 ms, %6 bytes still buffered, %7 bytes pending")
                 .arg(m_playbackElapsed.elapsed()).arg(m_playbackBytes / 16).arg(m_acceptedBytes / 16)
                 .arg(m_shortWrites).arg(m_out->processedUSecs() / 1000)
-                .arg(m_out->bufferSize() - m_out->bytesFree()));
+                .arg(m_out->bufferSize() - m_out->bytesFree()).arg(m_pendingPlayback.size()));
             m_playbackElapsed.invalidate();
         }
 		//m_outdev->reset();
 		m_out->reset();
 		m_out->stop();
+        m_outdev = nullptr;
+        m_pendingPlayback.clear();
 	}
 }
 
@@ -229,13 +275,9 @@ void AudioEngine::write(int16_t *pcm, size_t s)
 
     if(!m_outdev) return;
     const qint64 requested = sizeof(int16_t) * s;
-	const qint64 l = m_outdev->write((const char *) pcm, requested);
+    m_pendingPlayback.append(reinterpret_cast<const char *>(pcm), requested);
     m_playbackBytes += requested;
-    if(l > 0) m_acceptedBytes += l;
-	if (l != requested){
-        ++m_shortWrites;
-		qDebug() << "AudioEngine::write() " << s << ":" << l << ":" << (int)m_out->bytesFree() << ":" << m_out->bufferSize() << ":" << m_out->error();
-	}
+    flush_playback();
 
 	for(uint32_t i = 0; i < s; ++i){
 		if(pcm[i] > m_maxlevel){

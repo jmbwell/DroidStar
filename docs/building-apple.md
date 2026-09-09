@@ -1,6 +1,9 @@
 # Building DroidStar for macOS and iOS
 
-Status: macOS configure and compile verified; runtime testing and iOS build pending.
+Status: macOS build, launch, microphone permission, and DMR transmit/receive
+verified. iOS signing, installation, launch, microphone permission, and DMR
+transmit/receive are also verified on an iPhone 17 Pro Max. Other audio routes
+and standalone macOS packaging are not verified.
 
 ## Prerequisites
 
@@ -63,18 +66,151 @@ The build directory is temporary; for a persistent build, replace
 `/tmp/droidstar-macos-build` with `build/macos` in both commands. Repeat the build
 command after source changes.
 
-Compilation is verified. Launch, microphone access, audio playback and capture,
-and network operation remain to be tested.
+### Runtime verification
+
+Verified on September 8, 2026 with the Apple Silicon debug build:
+
+- Application launch and the macOS microphone permission prompt.
+- BrandMeister connection and a Parrot test using destination 310997 with Private checked.
+- Smooth, intelligible transmit and receive audio using the bundled vocoder and
+  the LG UltraFine Display microphone and speakers, selected through OS Default.
+- Capture timing after conversion from native 48 kHz float audio to mono 8 kHz:
+  6,010 ms elapsed produced 6,005 ms of audio, with 42 samples left queued.
+  Playback accepted all supplied audio with no short writes.
+- Rejected connections now report an error and stay disconnected instead of
+  crashing or repeatedly reconnecting.
+
+Other microphones, denied permission, device changes during a connection,
+other digital modes, and standalone deployment still need live testing. 
+
+## Apple app metadata
+
+The app keeps the DroidStar name and existing artwork. CMake supplies version
+`1.0.0` from the project version and a separate numeric build number. The Git
+revision remains available for troubleshooting.
+
+| CMake setting | Default | Purpose |
+| --- | --- | --- |
+| `DROIDSTAR_BUNDLE_IDENTIFIER` | `com.yourcompany.90d5dd37.DroidStar` | Preserves the existing identifier unless a builder overrides it. |
+| `DROIDSTAR_BUILD_NUMBER` | `1` | Positive integer identifying an Apple build. Increment for subsequent distributed builds. |
+
+Override the identifier for your own signed builds. Keep personal identifiers,
+Qt paths, and signing-team settings in `CMakeUserPresets.json`, which Git ignores.
+For example, with CMake 3.21 or newer:
+
+```json
+{
+  "version": 3,
+  "configurePresets": [{
+    "name": "macos-local",
+    "generator": "Unix Makefiles",
+    "binaryDir": "${sourceDir}/build/macos",
+    "cacheVariables": {
+      "CMAKE_TOOLCHAIN_FILE": "$env{HOME}/Qt/6.11.2/macos/lib/cmake/Qt6/qt.toolchain.cmake",
+      "CMAKE_BUILD_TYPE": "Debug",
+      "DROIDSTAR_BUNDLE_IDENTIFIER": "com.example.DroidStar",
+      "DROIDSTAR_BUILD_NUMBER": "1"
+    }
+  }],
+  "buildPresets": [{
+    "name": "macos-local",
+    "configurePreset": "macos-local",
+    "jobs": 6
+  }]
+}
+```
+
+Replace the example identifier and Qt path with your own, then run:
+
+```sh
+cmake --preset macos-local
+cmake --build --preset macos-local
+```
+
+This produces `build/macos/DroidStar.app`. No personal identifier or signing
+team is required in the shared project files. For iOS, use the iOS Qt toolchain
+and the Xcode generator in a separate preset/build directory. Set
+`CMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM` locally when configuring device signing.
+
+macOS uses the project's plist template. iOS retains Qt's generated plist and
+default launch storyboard, adds the microphone explanation, and uses the
+existing AppIcon asset catalog. Both platforms use this permission text:
+"DroidStar uses your microphone to transmit your voice to amateur radio networks."
 
 ## iOS
 
 Use the Qt iOS kit's `qt-cmake` wrapper to configure an Xcode project, following
-the [Qt iOS build workflow](https://doc.qt.io/qt-6/ios.html). Exact commands,
-simulator compatibility, and signing configuration remain to be verified.
+the [Qt iOS build workflow](https://doc.qt.io/qt-6/ios.html), or use a local preset
+as described above. Xcode project generation was verified with Qt 6.11.2 and
+Xcode 26.6. An unsigned arm64 device build was verified with an iOS 17 minimum
+deployment target. The iOS build embeds the FFmpeg frameworks required by the
+prebuilt Qt Multimedia package using `qt_add_ios_ffmpeg_libraries()` when that
+helper is available. See [Qt's iOS multimedia notes](https://doc.qt.io/qt-6/qtmultimedia-apple.html).
 
-Test on a simulator where supported, then on a physical device with signing
-configured in Xcode. Device testing needs to cover microphone permissions,
-capture and playback, audio route changes, and application interruptions.
+The launch-screen compiler also needs a matching simulator runtime installed
+in Xcode, even for a device build. With the tested Xcode installation, installing
+iOS 26.5 alone left an SDK/runtime build mismatch. The following local mapping
+resolved `iOS 26.5 Platform Not Installed`:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodebuild -downloadPlatform iOS -buildVersion 26.5 -architectureVariant arm64
+xcrun simctl runtime match set iphoneos26.5 23F73 --sdkBuild 23F81a
+```
+
+These build numbers are specific to the tested installation. Inspect
+`xcrun simctl runtime list` and `xcrun simctl runtime match list` before applying
+a mapping to another Xcode version. To clear this override, use
+`xcrun simctl runtime match set iphoneos26.5 --default --sdkBuild 23F81a`.
+
+For physical-device testing, connect and trust the iPhone, enable Developer Mode
+in its Privacy & Security settings, and add the Apple account in Xcode Settings.
+Select a development team for the DroidStar target and keep that team in the
+ignored local preset so regeneration preserves it. Apple may require acceptance
+of an updated developer agreement before automatic provisioning can succeed.
+
+The signed Debug build was installed on an iPhone 17 Pro Max running iOS 26.6.1.
+The resulting app's identifier, version/build fields, microphone explanation,
+launch screen, and icon were checked, and its code signature passed verification.
+Using the local `ios-local` preset described above, the command-line workflow is:
+
+```sh
+cmake --preset ios-local
+xcodebuild -project build/ios/DroidStar.xcodeproj -target DroidStar \
+  -configuration Debug -sdk iphoneos -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration -jobs 6
+xcrun devicectl list devices
+xcrun devicectl device install app --device <device-identifier> \
+  build/ios/Debug-iphoneos/DroidStar.app
+xcrun devicectl device process launch --device <device-identifier> <bundle-identifier>
+```
+
+### Runtime verification
+
+Verified on September 8, 2026 with the signed Debug build on an iPhone 17 Pro Max
+running iOS 26.6.1:
+
+- Application launch, microphone permission, and BrandMeister BM_3102 connection.
+- Transmit and receive using the bundled vocoder, built-in iPhone microphone,
+  and speaker. Parrot destination **310997 requires Private checked**; group
+  calls to that destination produced no return audio in this test.
+- Capture used the active iOS audio session's 48 kHz rate and mono Int16 format.
+  A 6,426 ms transmission produced 6,440 ms of converted 8 kHz audio, within the
+  session's 23 ms I/O callback duration. One 20 ms frame remained queued at stop.
+- Playback supplied, accepted, and processed all 6,300 ms of returned audio,
+  with zero short writes and no bytes left buffered or pending. The tester
+  reported substantially improved audio.
+
+The initial build used Qt's fixed 44.1 kHz preferred-format default on iOS and
+delivered only about 70% of elapsed capture time. The tested follow-up queries
+the active audio session rate, allows 250 ms of capture buffering, retries
+pending playback data, and drains the final audio before stopping. This test
+confirms normal timing for the built-in route; it does not isolate the effect
+of each change or verify other audio routes.
+
+Bluetooth and wired audio, route changes during a connection, denied microphone
+permission, application interruptions, other digital modes, and simulator
+execution still need testing.
 
 USB AMBE devices and MMDVM modems are excluded from the existing iOS build.
 
@@ -98,14 +234,12 @@ behavior and audio quality still require testing on the target device.
 
 ## Known gaps in this checkout
 
-- The bundled codec paths compile on macOS but still need audio validation;
-  iOS build and audio validation remain pending.
-- `Info.plist` contains a placeholder bundle identifier and microphone usage
-  description, and refers to a launch screen that is absent from the checkout.
-  Need to set a proper bundle identifier, add a launch screen, and verify the
-  microphone usage description
-- The explicit microphone permission request currently runs only on Android.
-  Apple permission handling needs implementation
+- The default bundle identifier is retained for upstream compatibility; builders
+  should supply their own identifier for signed distribution. iOS bundle metadata
+  and signing are verified; visual layout across device sizes remains unverified.
+- Microphone permission prompts and DMR audio work on the tested macOS and iOS
+  devices. Denied permission handling, other audio routes, route changes, and
+  application interruptions remain to be verified.
 - The deployment configuration uses the generic Qt application helper. It needs
   review for packaging this QML application on macOS
 - Some README instructions refer to `DroidStar.pro`, which is absent from this

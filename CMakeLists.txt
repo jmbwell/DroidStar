@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(DroidStar VERSION 1.0 LANGUAGES C CXX)
+project(DroidStar VERSION 1.0.0 LANGUAGES C CXX)
 
 include(cmake/MD380Vocoder.cmake)
 
@@ -146,7 +146,7 @@ if(UNIX)
 endif()
 
 if(APPLE)
-    set_target_properties(DroidStar PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/Info.plist)
+    include(cmake/AppleMetadata.cmake)
     target_link_libraries(DroidStar PRIVATE
         "-framework AVFoundation"
     )
